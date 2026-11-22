@@ -1,4 +1,5 @@
 # Effective Eureka
+# FOR A VIDEO DEMO OF THIS PROJECT, PLEASE VISIT: https://www.youtube.com/watch?v=Q1Ap_6O85qU
 
 A 3D browser experience built with Babylon.js and Vite. Enter a realm of breathing vines, build a profile, and run through a psychedelic obstacle course as a scientist.
 
@@ -71,3 +72,5 @@ The game includes flashing lights. Flashes are kept under three per second, and 
 ## Security
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+# FOR A VIDEO DEMO, CHECK OUT: https://www.youtube.com/watch?v=Q1Ap_6O85qU
