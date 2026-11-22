@@ -269,7 +269,7 @@ export function milestone() {
   });
 }
 
-/** Crash: the experiment explodes. */
+/** Crash: the experiment explodes (smaller version, kept for reuse). */
 export function crash() {
   playNoise({ filterType: 'lowpass', frequency: 3000, frequencyEnd: 100, decay: 0.9, volume: 0.55, reverb: 0.4 });
   playTone({ type: 'sawtooth', frequency: 400, frequencyEnd: 40, decay: 0.8, volume: 0.25, filter: { type: 'lowpass', frequency: 1500 } });
@@ -299,6 +299,140 @@ export function newBest() {
   melody.forEach(([frequency, delay]) => {
     playTone({ type: 'square', frequency, decay: 0.22, volume: 0.08, delay, filter: { type: 'lowpass', frequency: 5000 }, reverb: 0.4 });
     playTone({ type: 'sine', frequency: frequency / 2, decay: 0.22, volume: 0.1, delay });
+  });
+}
+
+// -----------------------------------------------------------------------------
+//  Explosion: the scientist goes KABOOM
+//  Deliberately huge and over the top. The limiter in audioEngine.js keeps
+//  it from distorting or hurting your ears, however many layers stack up.
+// -----------------------------------------------------------------------------
+
+/** The massive, exaggerated explosion when the scientist is hit. */
+export function explosion() {
+  // 1. Sub-bass drop you can feel
+  playTone({ type: 'sine', frequency: 110, frequencyEnd: 22, attack: 0.004, decay: 1.9, volume: 1 });
+
+  // 2. The main blast of air
+  playNoise({
+    filterType: 'lowpass',
+    frequency: 4500,
+    frequencyEnd: 60,
+    Q: 0.7,
+    attack: 0.003,
+    decay: 2.3,
+    volume: 1,
+    reverb: 0.6,
+  });
+
+  // 3. Sharp crack right at the start
+  playNoise({ filterType: 'highpass', frequency: 1200, decay: 0.35, volume: 0.9, reverb: 0.3 });
+
+  // 4. Distorted, gritty rumble
+  playTone({
+    type: 'sawtooth',
+    frequency: 58,
+    frequencyEnd: 26,
+    attack: 0.02,
+    decay: 2.5,
+    volume: 0.45,
+    filter: { type: 'lowpass', frequency: 280, Q: 3 },
+    vibrato: { rate: 17, depth: 8 },
+  });
+  playTone({
+    type: 'square',
+    frequency: 41,
+    frequencyEnd: 24,
+    decay: 1.7,
+    volume: 0.3,
+    filter: { type: 'lowpass', frequency: 220 },
+  });
+
+  // 5. Echoing aftershock booms, bouncing between speakers
+  [0.18, 0.42, 0.78].forEach((delay, i) => {
+    const strength = 1 - i * 0.25;
+    const pan = i % 2 === 0 ? -0.6 : 0.6;
+    playTone({
+      type: 'sine',
+      frequency: 95 * strength,
+      frequencyEnd: 28,
+      decay: 0.9,
+      volume: 0.6 * strength,
+      delay,
+      pan,
+    });
+    playNoise({
+      filterType: 'lowpass',
+      frequency: 2600,
+      frequencyEnd: 90,
+      decay: 1,
+      volume: 0.55 * strength,
+      delay,
+      pan,
+      reverb: 0.7,
+    });
+  });
+
+  // 6. Wet red splatter: a squelch and gloopy blubs
+  playNoise({
+    filterType: 'bandpass',
+    frequency: 950,
+    frequencyEnd: 220,
+    Q: 2.5,
+    decay: 0.6,
+    volume: 0.6,
+    delay: 0.05,
+  });
+  for (let i = 0; i < 6; i += 1) {
+    const pitch = randRange(120, 260);
+    playTone({
+      type: 'sine',
+      frequency: pitch,
+      frequencyEnd: pitch * 2.4,
+      attack: 0.005,
+      decay: 0.12,
+      volume: 0.22,
+      delay: 0.1 + i * 0.06,
+      pan: randRange(-0.8, 0.8),
+    });
+  }
+
+  // 7. Debris raining down for over a second
+  for (let i = 0; i < 14; i += 1) {
+    playNoise({
+      filterType: randPick(['highpass', 'bandpass']),
+      frequency: randRange(1500, 5200),
+      Q: 2,
+      decay: randRange(0.02, 0.07),
+      volume: randRange(0.06, 0.15),
+      delay: 0.35 + randRange(0, 1.5),
+      pan: randRange(-1, 1),
+    });
+  }
+}
+
+/**
+ * A wet splat: a red blob hitting the screen.
+ * @param {{ pan?: number }} [options]
+ */
+export function splat({ pan = 0 } = {}) {
+  if (!throttle('splat', 40)) return;
+  playNoise({
+    filterType: 'bandpass',
+    frequency: randRange(1000, 1500),
+    frequencyEnd: 280,
+    Q: 1.8,
+    decay: 0.18,
+    volume: 0.45,
+    pan,
+  });
+  playTone({
+    type: 'sine',
+    frequency: randRange(260, 340),
+    frequencyEnd: 70,
+    decay: 0.13,
+    volume: 0.28,
+    pan,
   });
 }
 

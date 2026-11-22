@@ -1,8 +1,12 @@
 /**
  * Effective Eureka - storage utilities
  *
- * Saves the player's profile, best score and settings in the browser's
- * localStorage so they survive closing the tab.
+ * What is remembered, and for how long:
+ *  - PROFILE: this visit only. It lives in memory, so every page load
+ *    starts with a blank profile form. Any profile saved by an older
+ *    version of the app is deleted on load.
+ *  - BEST SCORE and SETTINGS (sound on/off): saved in localStorage, so
+ *    they survive closing the tab.
  *
  * Security and reliability:
  *  - All keys are namespaced and versioned ("effective-eureka:v1:...").
@@ -20,7 +24,7 @@ const NAMESPACE = 'effective-eureka';
 const SCHEMA_VERSION = 1;
 
 const KEYS = Object.freeze({
-  profile: `${NAMESPACE}:v${SCHEMA_VERSION}:profile`,
+  profile: `${NAMESPACE}:v${SCHEMA_VERSION}:profile`, // only used to delete old saved profiles
   bestScore: `${NAMESPACE}:v${SCHEMA_VERSION}:best-score`,
   settings: `${NAMESPACE}:v${SCHEMA_VERSION}:settings`,
 });
@@ -123,7 +127,7 @@ function detectLocalStorage() {
 
 const hasLocalStorage = typeof window !== 'undefined' && detectLocalStorage();
 
-/** Whether data will persist after the tab is closed. */
+/** Whether best score and settings will persist after the tab is closed. */
 export const isPersistent = hasLocalStorage;
 
 /**
@@ -194,6 +198,10 @@ function readJson(key) {
 function writeJson(key, value) {
   return writeRaw(key, JSON.stringify(value));
 }
+
+// Delete any profile saved by an older version of the app, so personal
+// answers are never left sitting in the browser.
+removeRaw(KEYS.profile);
 
 // -----------------------------------------------------------------------------
 //  Cleaning and validation
@@ -282,39 +290,45 @@ export function validateProfile(profile) {
 }
 
 // -----------------------------------------------------------------------------
-//  Public API: profile
+//  Public API: profile (this visit only)
 // -----------------------------------------------------------------------------
 
 /**
- * Load the saved profile, or null if there isn't a valid one.
+ * The profile for this visit. Lives only in memory, so it is gone
+ * as soon as the page is reloaded or closed.
+ * @type {Profile | null}
+ */
+let sessionProfile = null;
+
+/**
+ * Get the profile for this visit, or null if one hasn't been created yet.
+ * On every fresh page load this returns null.
  * @returns {Profile | null}
  */
 export function loadProfile() {
-  const stored = readJson(KEYS.profile);
-  if (!stored || typeof stored !== 'object') return null;
-
-  const profile = sanitizeProfile(/** @type {Record<string, unknown>} */ (stored));
-  return Object.keys(validateProfile(profile)).length === 0 ? profile : null;
+  if (!sessionProfile) return null;
+  return Object.keys(validateProfile(sessionProfile)).length === 0 ? sessionProfile : null;
 }
 
 /**
- * Save a profile. It is sanitized again before writing.
+ * Keep a profile for the rest of this visit (not saved to the browser).
+ * It is sanitized before being kept.
  * @param {Record<string, unknown>} profile
- * @returns {Profile} The cleaned profile that was saved
+ * @returns {Profile} The cleaned profile
  */
 export function saveProfile(profile) {
-  const clean = sanitizeProfile(profile);
-  writeJson(KEYS.profile, clean);
-  return clean;
+  sessionProfile = sanitizeProfile(profile);
+  return sessionProfile;
 }
 
-/** Delete the saved profile. */
+/** Forget the profile for this visit (and any old saved copy). */
 export function clearProfile() {
+  sessionProfile = null;
   removeRaw(KEYS.profile);
 }
 
 // -----------------------------------------------------------------------------
-//  Public API: best score
+//  Public API: best score (saved between visits)
 // -----------------------------------------------------------------------------
 
 /** Highest score we'll accept, to reject obviously edited values. */
@@ -345,7 +359,7 @@ export function submitScore(score) {
 }
 
 // -----------------------------------------------------------------------------
-//  Public API: settings
+//  Public API: settings (saved between visits)
 // -----------------------------------------------------------------------------
 
 /**
@@ -379,7 +393,8 @@ export function saveSettings(partial) {
 //  Public API: reset everything
 // -----------------------------------------------------------------------------
 
-/** Remove all Effective Eureka data from this browser. */
+/** Remove all Effective Eureka data from this browser and this visit. */
 export function clearAll() {
+  sessionProfile = null;
   Object.values(KEYS).forEach(removeRaw);
 }

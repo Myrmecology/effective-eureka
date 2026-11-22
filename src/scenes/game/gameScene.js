@@ -4,8 +4,8 @@
  * The playable runner. Flow:
  *   intro   → the scientist walks in from the left edge
  *   playing → he runs, obstacles come at him, score climbs, speed rises
- *   dead    → he tumbles away; after a moment onGameOver() fires
- *   (paused can interrupt "playing")
+ *   dead    → he EXPLODES; after a moment onGameOver() fires
+ *   (paused can interrupt "intro" or "playing")
  *
  * The scene talks to the HTML HUD only through callbacks (main.js owns the DOM).
  *
@@ -14,7 +14,7 @@
 
 import { Scene, UniversalCamera, Vector3 } from '@babylonjs/core';
 import {
-  crash,
+  explosion as explosionSound,
   gameStart,
   jump as jumpSound,
   land as landSound,
@@ -24,11 +24,12 @@ import {
   startGameMusic,
   stopGameMusic,
 } from '@/audio/sfx.js';
+import { createExplosion } from '@/scenes/game/explosion.js';
 import { createGameInput } from '@/scenes/game/input.js';
 import { createObstacles } from '@/scenes/game/obstacles.js';
 import { createPsychedelicFx } from '@/scenes/game/psychedelicFx.js';
 import { createScientist } from '@/scenes/game/scientist.js';
-import { clamp, easeInOutSine, randRange } from '@/utils/math.js';
+import { clamp, damp, easeInOutSine, randRange } from '@/utils/math.js';
 
 // -----------------------------------------------------------------------------
 //  Tuning
@@ -44,9 +45,16 @@ const ACCELERATION = 0.12; // speed gained per second of play
 const MILESTONE_EVERY = 10; // points
 const MILESTONE_SPEED_BOOST = 0.4;
 const INTRO_SECONDS = 1.6;
-const GAME_OVER_DELAY_MS = 1100;
+const GAME_OVER_DELAY_MS = 1800; // long enough to enjoy the explosion
 
 const BASE_BPM = 124;
+
+/** Camera tilt (visual only; it never affects gameplay). */
+const TILT_MAX = 0.17; // radians, about 10 degrees
+const TILT_MIN_SHARE = 0.45; // share of the max tilt from the very start of a run
+
+/** Where the explosion starts, relative to the scientist's feet. */
+const EXPLOSION_OFFSET = new Vector3(0, 0.95, 0);
 
 /**
  * @typedef {'intro' | 'playing' | 'paused' | 'dead'} GamePhase
@@ -109,6 +117,12 @@ export function createGameScene({ engine, options }) {
     spawnX: viewHalfWidth * 1.4,
     despawnX: -viewHalfWidth * 1.5,
   });
+  const explosion = createExplosion(scene, camera, {
+    playerColor,
+    floorY: 0,
+    floorFrontZ: -1,
+    panRange: viewHalfWidth,
+  });
 
   // ---------------------------------------------------------------------------
   //  State
@@ -123,6 +137,7 @@ export function createGameScene({ engine, options }) {
   let nextMilestone = MILESTONE_EVERY;
   let gameOverTimer = 0;
   let time = 0;
+  let tilt = 0;
   const shake = { time: 0, duration: 0, strength: 0 };
 
   // ---------------------------------------------------------------------------
@@ -146,7 +161,9 @@ export function createGameScene({ engine, options }) {
     nextMilestone = MILESTONE_EVERY;
     gameOverTimer = 0;
 
+    explosion.clear();
     obstacles.reset();
+    scientist.root.setEnabled(true); // put him back together
     scientist.reset(introStartX, 'walk');
     scientist.setSpeedFactor(1);
     fx.setIntensity(0);
@@ -166,14 +183,21 @@ export function createGameScene({ engine, options }) {
     startGameMusic(BASE_BPM);
   }
 
-  /** Crash! */
+  /** Hit! The scientist explodes. */
   function endRun() {
     phase = 'dead';
+
+    const blastPosition = scientist.root.position.add(EXPLOSION_OFFSET);
     scientist.die();
-    crash();
+    scientist.root.setEnabled(false); // he's gone: only the explosion remains
+
+    explosion.explode(blastPosition);
+    explosionSound();
     stopGameMusic();
-    fx.flash('#ff3dd8', 1);
-    shakeCamera(0.35, 0.6);
+
+    fx.flash('#ff2a2a', 1);
+    shakeCamera(0.7, 0.9);
+
     gameOverTimer = window.setTimeout(() => onGameOver(score), GAME_OVER_DELAY_MS);
   }
 
@@ -218,6 +242,7 @@ export function createGameScene({ engine, options }) {
         break;
       case 'dead':
         scientist.update(dt);
+        explosion.update(dt);
         fx.update(dt, 0);
         break;
       case 'paused':
@@ -320,6 +345,19 @@ export function createGameScene({ engine, options }) {
     shake.time = duration;
   }
 
+  /**
+   * The woozy tilt: two slow waves mixed together so the sway never feels
+   * like a simple back-and-forth. It grows as the game speeds up.
+   * @returns {number} Target tilt in radians
+   */
+  function targetTilt() {
+    if (fx.safeMode || phase !== 'playing') return 0;
+    const progress = clamp((speed - START_SPEED) / (MAX_SPEED - START_SPEED), 0, 1);
+    const amount = TILT_MAX * (TILT_MIN_SHARE + (1 - TILT_MIN_SHARE) * progress);
+    const wave = Math.sin(time * 0.35) * 0.7 + Math.sin(time * 0.83 + 1.3) * 0.3;
+    return amount * wave;
+  }
+
   /** @param {number} dt */
   function updateCamera(dt) {
     let offsetX = 0;
@@ -335,14 +373,14 @@ export function createGameScene({ engine, options }) {
     camera.position.set(CAMERA_POSITION.x + offsetX, CAMERA_POSITION.y + offsetY, CAMERA_POSITION.z);
     camera.setTarget(CAMERA_TARGET.add(new Vector3(offsetX * 0.5, offsetY * 0.5, 0)));
 
-    // Psychedelic touches: a slow tilt and a slight zoom pulse on the beat.
-    if (!fx.safeMode && phase === 'playing') {
-      camera.rotation.z = Math.sin(time * 0.4) * 0.03 * (speed / MAX_SPEED);
-      camera.fov = CAMERA_FOV - fx.getPulse() * 0.015;
-    } else {
-      camera.rotation.z = 0;
-      camera.fov = CAMERA_FOV;
+    // Tilt eases smoothly toward its target (and back to level on crash or pause).
+    if (phase !== 'paused') {
+      tilt = damp(tilt, targetTilt(), phase === 'playing' ? 2.5 : 1.5, dt);
     }
+    camera.rotation.z = tilt;
+
+    // Slight zoom pulse on the beat while playing.
+    camera.fov = !fx.safeMode && phase === 'playing' ? CAMERA_FOV - fx.getPulse() * 0.015 : CAMERA_FOV;
   }
 
   // ---------------------------------------------------------------------------
@@ -352,6 +390,7 @@ export function createGameScene({ engine, options }) {
     window.clearTimeout(gameOverTimer);
     stopGameMusic();
     input.destroy();
+    explosion.dispose();
     scientist.dispose();
     obstacles.dispose();
     fx.dispose();

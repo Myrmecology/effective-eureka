@@ -1,19 +1,38 @@
 /**
- * Effective Eureka - obstacles
+ * Effective Eureka - obstacles (v2: procedural sections)
  *
- * Spawns obstacle patterns at the right edge, scrolls them left toward the
+ * Spawns obstacles at the right edge, scrolls them left toward the
  * scientist, handles collisions and scoring, and removes them off-screen.
+ *
+ * Variety system:
+ *  - Each "section" is built from 1 to 4 randomized ELEMENTS (spike clusters,
+ *    block runs, stairs, saws, platforms...). Harder levels chain more.
+ *  - Elements are drawn from a weighted SHUFFLE BAG, so you see a mix
+ *    before anything repeats, and the same element never appears twice in a row.
+ *  - Every element randomizes its own details (cluster size, run length,
+ *    platform width, saw height).
+ *
+ * Fairness rules:
+ *  - Gaps between elements are measured in TIME (seconds x speed), so there
+ *    is always room to land and jump again, at any speed.
+ *  - Bouncing saws are timed to be at their very top (run under) or very
+ *    bottom (jump over) when they reach you.
  *
  * Collision model (axis-aligned boxes in the x/y plane):
  *  - "deadly" boxes (spikes, saws): touching one ends the run.
- *  - "solid" boxes (blocks, platforms): you can land on the top. Hitting
- *    the side or bottom ends the run.
+ *  - "solid" boxes (blocks, platforms): land on the top; hitting the
+ *    side or bottom ends the run.
+ *
+ * Public API (unchanged from v1):
+ *   update(dt, speed, playerX) → { passed }
+ *   getSupportHeight(hitbox, feetY), hitsPlayer(hitbox, feetY)
+ *   setDifficulty(level), setPulse(value), reset(), dispose()
  *
  * @module scenes/game/obstacles
  */
 
 import { Color3, Color4, Mesh, MeshBuilder, StandardMaterial, TransformNode } from '@babylonjs/core';
-import { TAU, clamp, randPick, randRange } from '@/utils/math.js';
+import { TAU, clamp, randInt, randRange } from '@/utils/math.js';
 
 // -----------------------------------------------------------------------------
 //  Tuning
@@ -22,18 +41,33 @@ import { TAU, clamp, randPick, randRange } from '@/utils/math.js';
 /** How far above a block's top your feet may be (or slightly below) to count as landing. */
 const LANDING_TOLERANCE = 0.28;
 
-/** Time gap between patterns at the start and at max difficulty (seconds). */
-const GAP_SECONDS_EASY = [1.15, 1.7];
-const GAP_SECONDS_HARD = [0.7, 1.1];
+/** Breather between sections, in seconds (easy → hardest). */
+const SECTION_GAP_EASY = [0.95, 1.4];
+const SECTION_GAP_HARD = [0.6, 0.95];
+
+/** Gap between elements inside a section, in seconds: time to land and re-jump. */
+const ELEMENT_GAP = [0.72, 0.95];
+
+/** How many elements a section chains together, per difficulty level 0 to 4. */
+const ELEMENTS_PER_SECTION = [
+  [1, 2],
+  [1, 2],
+  [1, 3],
+  [2, 3],
+  [2, 4],
+];
 
 const SPIKE_SIZE = 0.7;
 const BLOCK_SIZE = 1;
 const SAW_RADIUS = 0.45;
 
+/** Bouncing saw motion */
+const BOUNCER_MID = 1.6;
+const BOUNCER_AMPLITUDE = 1.1;
+const BOUNCER_PERIOD = 1.6; // seconds per full bounce
+
 // -----------------------------------------------------------------------------
-//  Patterns
-//  Each piece: { type, x (offset from pattern start), y?, w? }
-//  minLevel: the difficulty level where this pattern starts appearing.
+//  Types
 // -----------------------------------------------------------------------------
 
 /** @typedef {'spike' | 'block' | 'tallBlock' | 'saw' | 'platform'} ObstacleType */
@@ -41,77 +75,25 @@ const SAW_RADIUS = 0.45;
 /**
  * @typedef {Object} PatternPiece
  * @property {ObstacleType} type
- * @property {number} x
- * @property {number} [y]
- * @property {number} [w]   Platform width
+ * @property {number} x               Offset from the element's start
+ * @property {number} [y]             Height (saws, platforms, spikes on blocks)
+ * @property {number} [w]             Platform width
+ * @property {boolean} [bounce]       Saw bounces up and down
  */
 
-/** @type {{ name: string, minLevel: number, width: number, pieces: PatternPiece[] }[]} */
-const PATTERNS = [
-  { name: 'single-spike', minLevel: 0, width: 0.7, pieces: [{ type: 'spike', x: 0 }] },
-  { name: 'double-spike', minLevel: 0, width: 1.4, pieces: [{ type: 'spike', x: 0 }, { type: 'spike', x: 0.7 }] },
-  { name: 'block', minLevel: 0, width: 1, pieces: [{ type: 'block', x: 0 }] },
-  {
-    name: 'block-run',
-    minLevel: 1,
-    width: 3,
-    pieces: [{ type: 'block', x: 0 }, { type: 'block', x: 1 }, { type: 'block', x: 2 }],
-  },
-  { name: 'ground-saw', minLevel: 1, width: 0.9, pieces: [{ type: 'saw', x: 0.45, y: SAW_RADIUS + 0.05 }] },
-  {
-    name: 'block-then-spike',
-    minLevel: 1,
-    width: 3.2,
-    pieces: [{ type: 'block', x: 0 }, { type: 'spike', x: 2.5 }],
-  },
-  {
-    name: 'triple-spike',
-    minLevel: 2,
-    width: 2.1,
-    pieces: [{ type: 'spike', x: 0 }, { type: 'spike', x: 0.7 }, { type: 'spike', x: 1.4 }],
-  },
-  {
-    name: 'staircase',
-    minLevel: 2,
-    width: 3,
-    pieces: [{ type: 'block', x: 0 }, { type: 'tallBlock', x: 1 }, { type: 'tallBlock', x: 2 }],
-  },
-  {
-    name: 'high-saw',
-    minLevel: 2,
-    width: 0.9,
-    pieces: [{ type: 'saw', x: 0.45, y: 2.25 }], // run under it, don't jump into it
-  },
-  {
-    name: 'spike-pit-platform',
-    minLevel: 3,
-    width: 3.6,
-    pieces: [
-      { type: 'platform', x: 0.2, y: 1.45, w: 3.2 },
-      { type: 'spike', x: 0.5 },
-      { type: 'spike', x: 1.2 },
-      { type: 'spike', x: 1.9 },
-      { type: 'spike', x: 2.6 },
-    ],
-  },
-  {
-    name: 'saw-spike-combo',
-    minLevel: 3,
-    width: 3.4,
-    pieces: [{ type: 'spike', x: 0 }, { type: 'saw', x: 2.9, y: SAW_RADIUS + 0.05 }],
-  },
-  {
-    name: 'block-gauntlet',
-    minLevel: 4,
-    width: 5.4,
-    pieces: [
-      { type: 'block', x: 0 },
-      { type: 'spike', x: 1.6 },
-      { type: 'tallBlock', x: 3.2 },
-      { type: 'spike', x: 4.7 },
-    ],
-  },
-];
+/**
+ * @typedef {Object} BuiltElement
+ * @property {number} width
+ * @property {PatternPiece[]} pieces
+ */
+
+/**
+ * @typedef {Object} ElementDefinition
+ * @property {string} id
+ * @property {number} minLevel  Difficulty level where it starts appearing
+ * @property {number} weight    How often it appears relative to others
+ * @property {(level: number) => BuiltElement} build
+ */
 
 /**
  * @typedef {Object} Collider
@@ -123,17 +105,149 @@ const PATTERNS = [
  */
 
 /**
+ * @typedef {Object} BounceMotion
+ * @property {number} age     Seconds since spawn
+ * @property {number} omega   Radians per second
+ * @property {number} phase   Radians
+ * @property {Collider} collider
+ */
+
+/**
  * @typedef {Object} Obstacle
  * @property {ObstacleType} type
  * @property {TransformNode} node
- * @property {number} x       World x of the obstacle's left edge
+ * @property {number} x
  * @property {number} width
  * @property {Collider[]} colliders
  * @property {boolean} scored
- * @property {boolean} countsForScore  Only the first piece of a pattern scores
- * @property {Mesh[]} edgeMeshes       Meshes with glowing edges (recolored each frame)
+ * @property {boolean} countsForScore
+ * @property {Mesh[]} edgeMeshes
  * @property {TransformNode | null} spinner
+ * @property {BounceMotion | null} bounce
  */
+
+// -----------------------------------------------------------------------------
+//  Element library
+// -----------------------------------------------------------------------------
+
+/**
+ * A row of identical pieces side by side.
+ * @param {ObstacleType} type
+ * @param {number} count
+ * @param {number} size
+ * @param {number} [y]
+ * @returns {BuiltElement}
+ */
+function row(type, count, size, y) {
+  const pieces = [];
+  for (let i = 0; i < count; i += 1) pieces.push({ type, x: i * size, y });
+  return { width: count * size, pieces };
+}
+
+/** @type {ElementDefinition[]} */
+const ELEMENTS = [
+  {
+    id: 'spikes',
+    minLevel: 0,
+    weight: 3,
+    build: (level) => row('spike', randInt(1, level >= 2 ? 3 : 2), SPIKE_SIZE),
+  },
+  {
+    id: 'blocks',
+    minLevel: 0,
+    weight: 2,
+    build: () => row('block', randInt(1, 3), BLOCK_SIZE),
+  },
+  {
+    id: 'ground-saw',
+    minLevel: 1,
+    weight: 2,
+    build: () => ({
+      width: SAW_RADIUS * 2,
+      pieces: [{ type: 'saw', x: SAW_RADIUS, y: SAW_RADIUS + 0.05 }],
+    }),
+  },
+  {
+    id: 'block-then-spike',
+    minLevel: 1,
+    weight: 2,
+    build: () => {
+      const blocks = randInt(1, 2);
+      return {
+        width: blocks + 1.5 + SPIKE_SIZE,
+        pieces: [
+          ...row('block', blocks, BLOCK_SIZE).pieces,
+          { type: 'spike', x: blocks + 1.5 },
+        ],
+      };
+    },
+  },
+  {
+    id: 'stairs',
+    minLevel: 2,
+    weight: 2,
+    build: () => {
+      const variants = [
+        ['block', 'tallBlock'],
+        ['block', 'tallBlock', 'tallBlock'],
+        ['block', 'tallBlock', 'block'],
+        ['block', 'block', 'tallBlock', 'tallBlock'],
+      ];
+      const steps = variants[randInt(0, variants.length - 1)];
+      return {
+        width: steps.length * BLOCK_SIZE,
+        pieces: steps.map((type, i) => ({ type: /** @type {ObstacleType} */ (type), x: i * BLOCK_SIZE })),
+      };
+    },
+  },
+  {
+    id: 'high-saw',
+    minLevel: 2,
+    weight: 1.5,
+    build: () => ({
+      width: SAW_RADIUS * 2,
+      pieces: [{ type: 'saw', x: SAW_RADIUS, y: randRange(2.25, 2.45) }], // run under it
+    }),
+  },
+  {
+    id: 'platform-pit',
+    minLevel: 2,
+    weight: 1.5,
+    build: () => {
+      const spikeCount = randInt(3, 5);
+      const pitWidth = spikeCount * SPIKE_SIZE;
+      const platformWidth = pitWidth + 0.6;
+      const pieces = [{ type: 'platform', x: 0, y: randRange(1.35, 1.6), w: platformWidth }];
+      for (let i = 0; i < spikeCount; i += 1) pieces.push({ type: 'spike', x: 0.3 + i * SPIKE_SIZE });
+      return { width: platformWidth, pieces: /** @type {PatternPiece[]} */ (pieces) };
+    },
+  },
+  {
+    id: 'spike-on-blocks',
+    minLevel: 3,
+    weight: 1.5,
+    build: () => ({
+      width: 5 * BLOCK_SIZE,
+      pieces: [
+        ...row('block', 5, BLOCK_SIZE).pieces,
+        { type: 'spike', x: 3 * BLOCK_SIZE + (BLOCK_SIZE - SPIKE_SIZE) / 2, y: BLOCK_SIZE },
+      ],
+    }),
+  },
+  {
+    id: 'bouncing-saw',
+    minLevel: 3,
+    weight: 1.5,
+    build: () => ({
+      width: SAW_RADIUS * 2,
+      pieces: [{ type: 'saw', x: SAW_RADIUS, y: BOUNCER_MID, bounce: true }],
+    }),
+  },
+];
+
+// =============================================================================
+//  Factory
+// =============================================================================
 
 /**
  * @param {import('@babylonjs/core').Scene} scene
@@ -145,34 +259,78 @@ export function createObstacles(scene, { spawnX, despawnX }) {
 
   /** @type {Obstacle[]} */
   let obstacles = [];
-  let distanceUntilNext = 6; // first pattern arrives after a short run-up
+  let distanceUntilNext = 6; // short run-up before the first section
   let difficulty = 0;
   let time = 0;
   let pulse = 0;
   let counter = 0;
-  let lastPatternName = '';
+
+  /** @type {ElementDefinition[]} */
+  let bag = [];
+  let lastElementId = '';
+
+  // ---------------------------------------------------------------------------
+  //  Shuffle bag: variety without long streaks or immediate repeats
+  // ---------------------------------------------------------------------------
+
+  /** Refill the bag with every allowed element, copies by weight, shuffled. */
+  function refillBag() {
+    bag = [];
+    for (const element of ELEMENTS) {
+      if (element.minLevel > difficulty) continue;
+      const copies = Math.max(1, Math.round(element.weight * 2));
+      for (let i = 0; i < copies; i += 1) bag.push(element);
+    }
+    // Fisher-Yates shuffle
+    for (let i = bag.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+  }
+
+  /** @returns {ElementDefinition} */
+  function drawElement() {
+    if (bag.length === 0) refillBag();
+
+    // Avoid repeating the previous element if anything else is available.
+    let index = bag.findIndex((element) => element.id !== lastElementId);
+    if (index === -1) index = 0;
+
+    const [element] = bag.splice(index, 1);
+    lastElementId = element.id;
+    return element;
+  }
 
   // ---------------------------------------------------------------------------
   //  Spawning
   // ---------------------------------------------------------------------------
 
-  /** Pick a pattern allowed at the current difficulty (avoiding immediate repeats). */
-  function pickPattern() {
-    const available = PATTERNS.filter((p) => p.minLevel <= difficulty && p.name !== lastPatternName);
-    const pattern = randPick(available.length > 0 ? available : PATTERNS);
-    lastPatternName = pattern.name;
-    return pattern;
-  }
-
   /**
-   * @param {number} startX
+   * Build a section of chained elements at the spawn line.
+   * @param {number} speed
+   * @param {number} playerX
+   * @returns {number} Total width of the section
    */
-  function spawnPattern(startX) {
-    const pattern = pickPattern();
-    pattern.pieces.forEach((piece, index) => {
-      obstacles.push(spawnPiece(piece, startX + piece.x, index === 0));
-    });
-    return pattern.width;
+  function spawnSection(speed, playerX) {
+    const [minCount, maxCount] = ELEMENTS_PER_SECTION[difficulty];
+    const count = randInt(minCount, maxCount);
+    let cursor = 0;
+    let width = 0;
+
+    for (let e = 0; e < count; e += 1) {
+      const element = drawElement();
+      const built = element.build(difficulty);
+
+      built.pieces.forEach((piece, index) => {
+        const x = spawnX + cursor + piece.x;
+        obstacles.push(spawnPiece(piece, x, index === 0, speed, playerX));
+      });
+
+      width = cursor + built.width;
+      cursor = width + randRange(ELEMENT_GAP[0], ELEMENT_GAP[1]) * speed;
+    }
+
+    return width;
   }
 
   /**
@@ -180,9 +338,11 @@ export function createObstacles(scene, { spawnX, despawnX }) {
    * @param {PatternPiece} piece
    * @param {number} x
    * @param {boolean} countsForScore
+   * @param {number} speed
+   * @param {number} playerX
    * @returns {Obstacle}
    */
-  function spawnPiece(piece, x, countsForScore) {
+  function spawnPiece(piece, x, countsForScore, speed, playerX) {
     const node = new TransformNode(`obstacle-${counter++}`, scene);
     node.position.x = x;
 
@@ -192,6 +352,8 @@ export function createObstacles(scene, { spawnX, despawnX }) {
     const edgeMeshes = [];
     /** @type {TransformNode | null} */
     let spinner = null;
+    /** @type {BounceMotion | null} */
+    let bounce = null;
     let width = 0;
 
     /**
@@ -207,14 +369,22 @@ export function createObstacles(scene, { spawnX, despawnX }) {
 
     switch (piece.type) {
       case 'spike': {
+        const baseY = piece.y ?? 0;
         const mesh = cloneFrom(templates.spike, 'spike');
-        mesh.position.set(SPIKE_SIZE / 2, SPIKE_SIZE / 2, 0);
+        mesh.position.set(SPIKE_SIZE / 2, baseY + SPIKE_SIZE / 2, 0);
         enableEdges(mesh, edgeMeshes);
         width = SPIKE_SIZE;
         // Pyramid hitbox: narrower than the base, lower than the tip.
-        colliders.push({ kind: 'deadly', minX: 0.2, maxX: SPIKE_SIZE - 0.2, minY: 0, maxY: SPIKE_SIZE * 0.72 });
+        colliders.push({
+          kind: 'deadly',
+          minX: 0.2,
+          maxX: SPIKE_SIZE - 0.2,
+          minY: baseY,
+          maxY: baseY + SPIKE_SIZE * 0.72,
+        });
         break;
       }
+
       case 'block':
       case 'tallBlock': {
         const height = piece.type === 'tallBlock' ? BLOCK_SIZE * 2 : BLOCK_SIZE;
@@ -226,6 +396,7 @@ export function createObstacles(scene, { spawnX, despawnX }) {
         colliders.push({ kind: 'solid', minX: 0, maxX: BLOCK_SIZE, minY: 0, maxY: height });
         break;
       }
+
       case 'saw': {
         const y = piece.y ?? SAW_RADIUS;
         spinner = new TransformNode('saw-spinner', scene);
@@ -236,9 +407,23 @@ export function createObstacles(scene, { spawnX, despawnX }) {
         blade.position.set(0, 0, 0);
         width = 0;
         const r = SAW_RADIUS * 0.75; // forgiving hitbox
-        colliders.push({ kind: 'deadly', minX: -r, maxX: r, minY: y - r, maxY: y + r });
+        /** @type {Collider} */
+        const collider = { kind: 'deadly', minX: -r, maxX: r, minY: y - r, maxY: y + r };
+        colliders.push(collider);
+
+        if (piece.bounce) {
+          // Time the bounce so it's at an extreme when it reaches the player:
+          // top (run under) or bottom (jump over), chosen at random.
+          const omega = TAU / BOUNCER_PERIOD;
+          const arrivalSeconds = Math.max(0, (x - playerX) / Math.max(speed, 0.1));
+          const targetAngle = Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
+          const phase = targetAngle - omega * arrivalSeconds;
+          bounce = { age: 0, omega, phase, collider };
+          applyBounce(spinner, bounce);
+        }
         break;
       }
+
       case 'platform': {
         const w = piece.w ?? 3;
         const thickness = 0.3;
@@ -251,11 +436,23 @@ export function createObstacles(scene, { spawnX, despawnX }) {
         colliders.push({ kind: 'solid', minX: 0, maxX: w, minY: y - thickness, maxY: y });
         break;
       }
+
       default:
         break;
     }
 
-    return { type: piece.type, node, x, width, colliders, scored: false, countsForScore, edgeMeshes, spinner };
+    return {
+      type: piece.type,
+      node,
+      x,
+      width,
+      colliders,
+      scored: false,
+      countsForScore,
+      edgeMeshes,
+      spinner,
+      bounce,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -276,23 +473,27 @@ export function createObstacles(scene, { spawnX, despawnX }) {
 
     // Spawn
     distanceUntilNext -= move;
-    if (distanceUntilNext <= 0) {
-      const width = spawnPattern(spawnX);
+    if (distanceUntilNext <= 0 && speed > 0) {
+      const width = spawnSection(speed, playerX);
       const t = clamp(difficulty / 4, 0, 1);
-      const minGap = GAP_SECONDS_EASY[0] + (GAP_SECONDS_HARD[0] - GAP_SECONDS_EASY[0]) * t;
-      const maxGap = GAP_SECONDS_EASY[1] + (GAP_SECONDS_HARD[1] - GAP_SECONDS_EASY[1]) * t;
-      // Gaps are measured in time, so faster speed means bigger distances
-      // and the game stays fair as it speeds up.
+      const minGap = SECTION_GAP_EASY[0] + (SECTION_GAP_HARD[0] - SECTION_GAP_EASY[0]) * t;
+      const maxGap = SECTION_GAP_EASY[1] + (SECTION_GAP_HARD[1] - SECTION_GAP_EASY[1]) * t;
       distanceUntilNext = width + randRange(minGap, maxGap) * speed;
     }
 
-    // Move, score and despawn
+    // Move, animate, score and despawn
     const survivors = [];
     for (const obstacle of obstacles) {
       obstacle.x -= move;
       obstacle.node.position.x = obstacle.x;
 
-      if (obstacle.spinner) obstacle.spinner.rotation.z += dt * 9;
+      if (obstacle.spinner) {
+        obstacle.spinner.rotation.z += dt * 9;
+        if (obstacle.bounce) {
+          obstacle.bounce.age += dt;
+          applyBounce(obstacle.spinner, obstacle.bounce);
+        }
+      }
 
       if (!obstacle.scored && obstacle.x + obstacle.width < playerX) {
         obstacle.scored = true;
@@ -319,9 +520,9 @@ export function createObstacles(scene, { spawnX, despawnX }) {
     setHue(materials.saw, time * 140 + 240, 1, boost);
     setHue(materials.platform, time * 60 + 180, 0.9, boost);
 
+    const edgeColor = new Color3();
     for (const obstacle of obstacles) {
-      const hue = (time * 120 + obstacle.x * 25) % 360;
-      const edgeColor = new Color3();
+      const hue = (((time * 120 + obstacle.x * 25) % 360) + 360) % 360;
       Color3.HSVtoRGBToRef(hue, 0.8, 1, edgeColor);
       for (const mesh of obstacle.edgeMeshes) {
         mesh.edgesColor = new Color4(edgeColor.r, edgeColor.g, edgeColor.b, 1);
@@ -336,8 +537,8 @@ export function createObstacles(scene, { spawnX, despawnX }) {
   /**
    * The height of the highest solid surface directly under the player.
    * @param {{ minX: number, maxX: number }} hitbox
-   * @param {number} feetY Current feet height
-   * @returns {number} 0 for the floor, or a block or platform top
+   * @param {number} feetY
+   * @returns {number}
    */
   function getSupportHeight(hitbox, feetY) {
     let support = 0;
@@ -368,7 +569,6 @@ export function createObstacles(scene, { spawnX, despawnX }) {
         if (hitbox.maxY <= c.minY || hitbox.minY >= c.maxY) continue;
 
         if (c.kind === 'deadly') return true;
-        // Solid: safe only if standing on (or landing onto) its top.
         if (feetY < c.maxY - LANDING_TOLERANCE) return true;
       }
     }
@@ -381,7 +581,11 @@ export function createObstacles(scene, { spawnX, despawnX }) {
 
   /** @param {number} level 0 (easy) to 4 (hardest) */
   function setDifficulty(level) {
-    difficulty = clamp(Math.floor(level), 0, 4);
+    const next = clamp(Math.floor(level), 0, 4);
+    if (next !== difficulty) {
+      difficulty = next;
+      bag = []; // refill with newly unlocked elements on the next draw
+    }
   }
 
   /** @param {number} value 0 to 1: brightness flash on the music beat */
@@ -395,7 +599,8 @@ export function createObstacles(scene, { spawnX, despawnX }) {
     obstacles = [];
     distanceUntilNext = 6;
     difficulty = 0;
-    lastPatternName = '';
+    bag = [];
+    lastElementId = '';
   }
 
   function dispose() {
@@ -408,6 +613,23 @@ export function createObstacles(scene, { spawnX, despawnX }) {
 }
 
 // =============================================================================
+//  Motion helper
+// =============================================================================
+
+/**
+ * Move a bouncing saw and its hitbox to the current height.
+ * @param {TransformNode} spinner
+ * @param {BounceMotion} bounce
+ */
+function applyBounce(spinner, bounce) {
+  const y = BOUNCER_MID + BOUNCER_AMPLITUDE * Math.sin(bounce.omega * bounce.age + bounce.phase);
+  spinner.position.y = y;
+  const r = SAW_RADIUS * 0.75;
+  bounce.collider.minY = y - r;
+  bounce.collider.maxY = y + r;
+}
+
+// =============================================================================
 //  Templates and materials
 // =============================================================================
 
@@ -417,7 +639,6 @@ export function createObstacles(scene, { spawnX, despawnX }) {
  * @param {ReturnType<typeof createMaterials>} materials
  */
 function createTemplates(scene, materials) {
-  // Spike: a four-sided pyramid
   const spike = MeshBuilder.CreateCylinder(
     'spike-template',
     { height: SPIKE_SIZE, diameterTop: 0, diameterBottom: SPIKE_SIZE * 1.3, tessellation: 4 },
@@ -452,8 +673,12 @@ function createTemplates(scene, materials) {
 function createSawTemplate(scene, material) {
   const parts = [];
 
-  const ring = MeshBuilder.CreateTorus('saw-ring', { diameter: SAW_RADIUS * 1.5, thickness: 0.16, tessellation: 28 }, scene);
-  ring.rotation.x = Math.PI / 2; // face the camera
+  const ring = MeshBuilder.CreateTorus(
+    'saw-ring',
+    { diameter: SAW_RADIUS * 1.5, thickness: 0.16, tessellation: 28 },
+    scene,
+  );
+  ring.rotation.x = Math.PI / 2;
   parts.push(ring);
 
   const hub = MeshBuilder.CreateCylinder('saw-hub', { diameter: 0.25, height: 0.12, tessellation: 16 }, scene);
