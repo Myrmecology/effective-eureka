@@ -1,0 +1,300 @@
+# =============================================================================
+#  Effective Eureka - .gitignore
+#  Security first: secrets, keys and credentials must never reach the repo.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+#  1. Dependencies
+# -----------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+jspm_packages/
+bower_components/
+
+
+# -----------------------------------------------------------------------------
+#  2. Vite / build output
+# -----------------------------------------------------------------------------
+dist/
+dist-ssr/
+build/
+out/
+.vite/
+*.local
+vite.config.*.timestamp-*
+*.tsbuildinfo
+
+
+# -----------------------------------------------------------------------------
+#  3. Logs, caches and test output
+# -----------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+coverage/
+.nyc_output/
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+*.tmp
+*.temp
+tmp/
+temp/
+
+
+# -----------------------------------------------------------------------------
+#  4. Environment variables and app secrets
+#     Commit only the *.example templates, never real values.
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.env
+.envrc
+.direnv/
+secrets/
+secret/
+.secrets
+*.secret
+*.secrets
+secrets.json
+secrets.yml
+secrets.yaml
+credentials.json
+credentials.yml
+*credentials*
+*.credentials
+.npmrc
+.yarnrc
+.yarnrc.yml
+auth.json
+token.txt
+*.token
+.netrc
+_netrc
+
+
+# -----------------------------------------------------------------------------
+#  5. GPG / GnuPG / OpenPGP
+#     Keyrings, private keys, revocation certificates, exports and agent files.
+#     NOTE: To intentionally commit a PUBLIC key (e.g. for commit verification),
+#     use:  git add -f path/to/publickey.asc
+# -----------------------------------------------------------------------------
+.gnupg/
+gnupg/
+private-keys-v1.d/
+openpgp-revocs.d/
+*.gpg
+*.pgp
+*.asc
+*.sig
+*.kbx
+*.kbx~
+*.rev
+pubring.*
+secring.*
+trustdb.gpg
+random_seed
+sshcontrol
+gpg-agent.conf
+gpg.conf
+dirmngr.conf
+scdaemon.conf
+S.gpg-agent*
+S.scdaemon
+S.dirmngr
+*.key.gpg
+*-secret-key*
+*-private-key*
+*secret-subkeys*
+*_secret.asc
+*_private.asc
+gpg-backup*/
+paperkey*
+
+
+# -----------------------------------------------------------------------------
+#  6. YubiKey / hardware security keys (PIV, OpenPGP card, OTP, FIDO2/U2F)
+#     Backups, management keys, PIN/PUK records, challenge-response secrets,
+#     exported certificates and resident SSH key handles.
+# -----------------------------------------------------------------------------
+.yubico/
+yubico/
+yubikey/
+yubikey-backup*/
+*yubikey*backup*
+*yubikey*.txt
+*yubikey*.json
+*yubikey*.csv
+ykman*.log
+ykman-export*
+challenge-*
+*.yubikey
+*.ykpers
+*.ykman
+u2f_keys
+.config/Yubico/
+pin*.txt
+puk*.txt
+*management-key*
+*mgmt-key*
+piv-*.pem
+piv-*.crt
+piv-*.key
+*.otp
+otp-secret*
+otp_secrets*
+recovery-codes*
+backup-codes*
+*recovery*codes*
+*2fa*backup*
+*totp*secret*
+
+
+# -----------------------------------------------------------------------------
+#  7. SSH keys (including hardware-backed *_sk keys)
+# -----------------------------------------------------------------------------
+.ssh/
+id_rsa
+id_rsa.*
+id_dsa
+id_dsa.*
+id_ecdsa
+id_ecdsa.*
+id_ecdsa_sk
+id_ecdsa_sk.*
+id_ed25519
+id_ed25519.*
+id_ed25519_sk
+id_ed25519_sk.*
+*_rsa
+*_ed25519
+*_ecdsa
+known_hosts
+authorized_keys
+ssh_config
+*.ppk
+
+
+# -----------------------------------------------------------------------------
+#  8. Certificates, private keys and keystores
+# -----------------------------------------------------------------------------
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.csr
+*.p7b
+*.p7c
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.kdbx
+*.age
+*.enc
+cert/
+certs/
+ssl/
+*.htpasswd
+
+
+# -----------------------------------------------------------------------------
+#  9. Cloud provider and deploy credentials
+# -----------------------------------------------------------------------------
+.aws/
+.azure/
+.gcloud/
+gcloud-service-key.json
+*service-account*.json
+.firebase/
+firebase-debug.log
+.vercel/
+.netlify/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.docker/config.json
+
+
+# -----------------------------------------------------------------------------
+#  10. Editors and IDEs
+#      Shared VS Code settings and extension recommendations are allowed.
+# -----------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.code-workspace
+.history/
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+\#*\#
+.\#*
+
+
+# -----------------------------------------------------------------------------
+#  11. Operating system files (Windows, macOS, Linux)
+# -----------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.directory
+.Trash-*
+.fuse_hidden*
+.nfs*
+
+
+# -----------------------------------------------------------------------------
+#  12. Archives and database dumps (often contain sensitive data)
+# -----------------------------------------------------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+*.backup
+*.orig

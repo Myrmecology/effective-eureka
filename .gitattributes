@@ -1,0 +1,104 @@
+# =============================================================================
+#  Effective Eureka - .gitattributes
+#  Consistent line endings across Windows, macOS and Linux, plus correct
+#  handling of binary assets.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  Default: let Git detect text files and store them with LF line endings
+# -----------------------------------------------------------------------------
+* text=auto eol=lf
+
+# -----------------------------------------------------------------------------
+#  Source code and web files
+# -----------------------------------------------------------------------------
+*.js        text eol=lf diff=javascript
+*.mjs       text eol=lf diff=javascript
+*.cjs       text eol=lf diff=javascript
+*.ts        text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.html      text eol=lf diff=html
+*.css       text eol=lf diff=css
+*.scss      text eol=lf diff=css
+*.md        text eol=lf diff=markdown
+*.txt       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.svg       text eol=lf
+*.glsl      text eol=lf
+*.vert      text eol=lf
+*.frag      text eol=lf
+*.fx        text eol=lf
+
+# Dotfiles
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+.editorconfig   text eol=lf
+.env.example    text eol=lf
+
+# Shell scripts must stay LF or they break in Bash
+*.sh        text eol=lf
+
+# Windows-only scripts must stay CRLF
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Lockfile: treat as text, but collapse it in diffs and GitHub language stats
+package-lock.json   text eol=lf -diff linguist-generated=true
+
+# -----------------------------------------------------------------------------
+#  Binary assets (never modify line endings, never diff)
+# -----------------------------------------------------------------------------
+# Images
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.avif      binary
+*.ico       binary
+*.bmp       binary
+
+# 3D models and textures (Babylon.js)
+*.glb       binary
+*.gltf      text eol=lf
+*.babylon   text eol=lf
+*.obj       text eol=lf
+*.stl       binary
+*.fbx       binary
+*.ktx       binary
+*.ktx2      binary
+*.dds       binary
+*.hdr       binary
+*.env       binary
+*.basis     binary
+
+# Fonts
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+*.eot       binary
+
+# Audio and video (in case we ever add any)
+*.mp3       binary
+*.wav       binary
+*.ogg       binary
+*.mp4       binary
+*.webm      binary
+
+# Documents and archives
+*.pdf       binary
+*.zip       binary
+*.7z        binary
+*.gz        binary
+
+# -----------------------------------------------------------------------------
+#  Exclude from "git archive" exports
+# -----------------------------------------------------------------------------
+.gitattributes  export-ignore
+.gitignore      export-ignore
+.editorconfig   export-ignore
+.vscode/        export-ignore

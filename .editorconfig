@@ -1,0 +1,67 @@
+# =============================================================================
+#  Effective Eureka - .editorconfig
+#  Keeps formatting consistent across editors and machines.
+#  https://editorconfig.org
+# =============================================================================
+
+# Stop searching parent folders for other .editorconfig files
+root = true
+
+# -----------------------------------------------------------------------------
+#  Defaults for every file
+# -----------------------------------------------------------------------------
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 100
+
+# -----------------------------------------------------------------------------
+#  JavaScript, HTML, CSS, JSON
+# -----------------------------------------------------------------------------
+[*.{js,mjs,cjs,ts,html,css,scss,json,jsonc}]
+indent_size = 2
+
+# -----------------------------------------------------------------------------
+#  Shader files (Babylon custom shaders, if we use them)
+# -----------------------------------------------------------------------------
+[*.{glsl,vert,frag,fx}]
+indent_size = 4
+
+# -----------------------------------------------------------------------------
+#  Markdown: two trailing spaces mean a line break, so keep them
+# -----------------------------------------------------------------------------
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# -----------------------------------------------------------------------------
+#  YAML must use spaces
+# -----------------------------------------------------------------------------
+[*.{yml,yaml}]
+indent_size = 2
+
+# -----------------------------------------------------------------------------
+#  Shell scripts
+# -----------------------------------------------------------------------------
+[*.sh]
+end_of_line = lf
+
+# -----------------------------------------------------------------------------
+#  Windows scripts
+# -----------------------------------------------------------------------------
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# -----------------------------------------------------------------------------
+#  Lockfiles and generated files: leave them exactly as tools write them
+# -----------------------------------------------------------------------------
+[{package-lock.json,*.min.js,*.min.css}]
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+max_line_length = off

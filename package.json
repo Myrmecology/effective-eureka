@@ -1,0 +1,22 @@
+{
+  "name": "effective-eureka",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Effective Eureka: a 3D vine-realm experience with a profile builder and a psychedelic runner game, built with Babylon.js and Vite.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.18.0"
+  },
+  "devDependencies": {
+    "vite": "^8.1.0"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!--
+      Content Security Policy: only allow code, styles, and media from this site.
+      - 'unsafe-inline' for styles is needed for Vite's dev CSS injection and
+        Babylon's inline canvas styles.
+      - ws://localhost:* allows Vite's hot reload connection during development.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self';
+        media-src 'self' data: blob:;
+        connect-src 'self' ws://localhost:* blob: data:;
+        worker-src 'self' blob:;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+      "
+    />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <title>Effective Eureka</title>
+    <meta
+      name="description"
+      content="Effective Eureka: enter a living realm of breathing vines, build your profile, and run through a psychedelic world."
+    />
+    <meta name="theme-color" content="#04140a" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Vine-leaf favicon, embedded so it needs no extra file -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 4C14 18 10 38 32 60 54 38 50 18 32 4z' fill='%2333d17a'/%3E%3Cpath d='M32 10v46' stroke='%23085c2c' stroke-width='3' fill='none'/%3E%3C/svg%3E"
+    />
+  </head>
+
+  <body>
+    <!-- Shown until the 3D engine has loaded -->
+    <div id="loading-screen" class="loading-screen" role="status" aria-live="polite">
+      <div class="loading-screen__spinner" aria-hidden="true"></div>
+      <p class="loading-screen__text">Growing the vines…</p>
+    </div>
+
+    <!-- Babylon.js renders every 3D scene into this canvas -->
+    <canvas id="render-canvas" class="render-canvas" aria-label="Effective Eureka 3D scene"></canvas>
+
+    <!-- HTML interface layered on top of the 3D canvas -->
+    <main id="ui-root" class="ui-root">
+      <!-- ================================================================
+           1. HOME SCREEN
+           ================================================================ -->
+      <section id="screen-home" class="screen screen--home" aria-labelledby="home-title">
+        <h1 id="home-title" class="home-title">
+          <span class="home-title__word">Effective</span>
+          <span class="home-title__word">Eureka</span>
+        </h1>
+
+        <button id="enter-btn" class="enter-btn" type="button">
+          <span class="enter-btn__label">Enter the Realm</span>
+        </button>
+      </section>
+
+      <!-- ================================================================
+           2. PROFILE CREATION SCREEN
+           ================================================================ -->
+      <section
+        id="screen-profile"
+        class="screen screen--profile"
+        aria-labelledby="profile-title"
+        hidden
+      >
+        <div class="panel">
+          <h2 id="profile-title" class="panel__title">Create Your Profile</h2>
+          <p class="panel__subtitle">Tell the realm who you are.</p>
+
+          <form id="profile-form" class="profile-form" novalidate autocomplete="off">
+            <div class="form-field">
+              <label for="field-name">Name</label>
+              <input
+                id="field-name"
+                name="name"
+                type="text"
+                maxlength="40"
+                required
+                spellcheck="false"
+                placeholder="What should we call you?"
+              />
+              <p class="form-field__error" data-error-for="name" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field form-field--color">
+              <label for="field-color">Favorite Color</label>
+              <div class="color-picker">
+                <input id="field-color" name="favoriteColor" type="color" value="#33d17a" />
+                <output id="field-color-value" for="field-color" class="color-picker__value">
+                  #33d17a
+                </output>
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label for="field-game">Favorite Video Game</label>
+              <input id="field-game" name="favoriteGame" type="text" maxlength="60" required />
+              <p class="form-field__error" data-error-for="favoriteGame" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field">
+              <label for="field-movie">Favorite Movie</label>
+              <input id="field-movie" name="favoriteMovie" type="text" maxlength="60" required />
+              <p class="form-field__error" data-error-for="favoriteMovie" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field">
+              <label for="field-subject">Favorite Subject in School</label>
+              <input
+                id="field-subject"
+                name="favoriteSubject"
+                type="text"
+                maxlength="60"
+                required
+              />
+              <p class="form-field__error" data-error-for="favoriteSubject" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field">
+              <label for="field-animal">Favorite Animal</label>
+              <input id="field-animal" name="favoriteAnimal" type="text" maxlength="60" required />
+              <p class="form-field__error" data-error-for="favoriteAnimal" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field">
+              <label for="field-cs">Favorite Computer Science Topic</label>
+              <input id="field-cs" name="favoriteCsTopic" type="text" maxlength="60" required />
+              <p class="form-field__error" data-error-for="favoriteCsTopic" aria-live="polite"></p>
+            </div>
+
+            <div class="form-field form-field--wide">
+              <label for="field-purpose">What is my purpose for using Effective Eureka?</label>
+              <textarea
+                id="field-purpose"
+                name="purpose"
+                rows="3"
+                maxlength="300"
+                required
+              ></textarea>
+              <p class="form-field__error" data-error-for="purpose" aria-live="polite"></p>
+            </div>
+
+            <div class="form-actions">
+              <button id="profile-submit-btn" class="btn btn--primary" type="submit">
+                Save Profile
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           3. PROFILE REVIEW SCREEN
+           ================================================================ -->
+      <section
+        id="screen-review"
+        class="screen screen--review"
+        aria-labelledby="review-title"
+        hidden
+      >
+        <div class="panel">
+          <h2 id="review-title" class="panel__title">Your Profile</h2>
+          <p class="panel__subtitle">Look it over. Change anything you like.</p>
+
+          <!-- Filled in by profileReview.js -->
+          <dl id="profile-summary" class="profile-summary"></dl>
+
+          <div class="form-actions form-actions--split">
+            <button id="edit-profile-btn" class="btn btn--ghost" type="button">
+              Edit Profile
+            </button>
+          </div>
+
+          <!-- The oozing slime button is built here by slimeButton.js -->
+          <div id="slime-button-host" class="slime-button-host"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           4. GAME SCREEN (HUD layered over the 3D game)
+           ================================================================ -->
+      <section id="screen-game" class="screen screen--game" aria-label="Game" hidden>
+        <div class="hud" aria-live="polite">
+          <div class="hud__item">
+            <span class="hud__label">Score</span>
+            <span id="hud-score" class="hud__value">0</span>
+          </div>
+          <div class="hud__item">
+            <span class="hud__label">Best</span>
+            <span id="hud-best" class="hud__value">0</span>
+          </div>
+        </div>
+
+        <p id="game-hint" class="game-hint">Press Space, click, or tap to jump</p>
+
+        <div
+          id="game-over"
+          class="game-over"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="game-over-title"
+          hidden
+        >
+          <h2 id="game-over-title" class="game-over__title">Experiment Failed!</h2>
+          <p class="game-over__score">
+            Score: <span id="game-over-score">0</span>
+          </p>
+          <div class="form-actions form-actions--split">
+            <button id="retry-btn" class="btn btn--primary" type="button">Try Again</button>
+            <button id="back-to-profile-btn" class="btn btn--ghost" type="button">
+              Back to Profile
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Sound on/off toggle, available on every screen -->
+    <button
+      id="sound-toggle"
+      class="sound-toggle"
+      type="button"
+      aria-pressed="true"
+      aria-label="Sound on. Click to mute."
+    >
+      <span class="sound-toggle__icon" aria-hidden="true">🔊</span>
+    </button>
+
+    <noscript>
+      <p class="noscript">Effective Eureka needs JavaScript enabled to grow its vines.</p>
+    </noscript>
+
+    <!-- Vite entry point. CSS is imported from inside main.js. -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
