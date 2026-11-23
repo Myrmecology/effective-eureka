@@ -15,7 +15,7 @@ import {
   playNoise,
   playTone,
 } from '@/audio/audioEngine.js';
-import { randPick, randRange } from '@/utils/math.js';
+import { clamp, randPick, randRange } from '@/utils/math.js';
 
 // -----------------------------------------------------------------------------
 //  Rate limiting: stops the same sound stacking up into noise
@@ -434,6 +434,62 @@ export function splat({ pan = 0 } = {}) {
     volume: 0.28,
     pan,
   });
+}
+
+// -----------------------------------------------------------------------------
+//  Bones: cartoon clattering
+// -----------------------------------------------------------------------------
+
+/**
+ * A woody "clack" when a bone hits the floor.
+ * Harder impacts are louder; smaller bones sound higher.
+ * Uses only two voices so many bones can clatter at once.
+ *
+ * @param {{ pan?: number, strength?: number, size?: number }} [options]
+ *   strength 0 (gentle tap) to 1 (hard smack); size around 0.6 to 1.5
+ */
+export function boneClack({ pan = 0, strength = 1, size = 1 } = {}) {
+  if (!throttle('boneClack', 22)) return;
+
+  const power = clamp(strength, 0.15, 1);
+  const pitch = randRange(950, 1500) / clamp(size, 0.5, 2);
+
+  // Hollow, woody body of the clack
+  playTone({
+    type: 'triangle',
+    frequency: pitch,
+    frequencyEnd: pitch * 0.82,
+    attack: 0.001,
+    decay: 0.05 + power * 0.04,
+    volume: 0.32 * power,
+    pan,
+  });
+
+  // Sharp knock on top
+  playNoise({
+    filterType: 'bandpass',
+    frequency: pitch * 1.7,
+    Q: 7,
+    attack: 0.001,
+    decay: 0.03,
+    volume: 0.38 * power,
+    pan,
+  });
+}
+
+/**
+ * A big, hollow cartoon "BONK" when the skull lands.
+ * @param {{ pan?: number, strength?: number }} [options]
+ */
+export function skullBonk({ pan = 0, strength = 1 } = {}) {
+  if (!throttle('skullBonk', 60)) return;
+
+  const power = clamp(strength, 0.2, 1);
+
+  // Hollow coconut-like "bonk" that drops in pitch
+  playTone({ type: 'sine', frequency: 540, frequencyEnd: 360, attack: 0.002, decay: 0.2, volume: 0.42 * power, pan });
+  playTone({ type: 'triangle', frequency: 270, frequencyEnd: 210, decay: 0.22, volume: 0.26 * power, pan });
+  playNoise({ filterType: 'bandpass', frequency: 1300, Q: 4, decay: 0.04, volume: 0.3 * power, pan });
 }
 
 // -----------------------------------------------------------------------------

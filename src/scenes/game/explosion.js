@@ -7,11 +7,13 @@
  *  - particle fire, sparks, smoke and red mist
  *  - red splatter blobs that fly, fall, and flatten into puddles on the floor
  *  - debris: lab-coat scraps, flask glass and goggle pieces that tumble and bounce
+ *  - cartoon BONES that fly everywhere, then clatter, bounce and skid on the floor
+ *  - the scientist's cartoon SKULL, still wearing his glowing goggles, landing with a BONK
  *  - red splats that hit the "camera lens", then drip down and fade
  *  - an orange flash of light
  *
- * Performance: blobs and debris use instancing (one draw call per shape),
- * and particle systems are created once and reused.
+ * Performance: blobs, debris and bones use instancing (one draw call per
+ * shape), and particle systems are created once and reused.
  *
  * Usage:
  *   const explosion = createExplosion(scene, camera, { playerColor });
@@ -26,14 +28,16 @@ import {
   Color3,
   Color4,
   DynamicTexture,
+  Mesh,
   MeshBuilder,
   ParticleSystem,
   PointLight,
   StandardMaterial,
+  TransformNode,
   Vector3,
 } from '@babylonjs/core';
-import { splat } from '@/audio/sfx.js';
-import { TAU, clamp, easeOutCubic, randPick, randRange } from '@/utils/math.js';
+import { boneClack, skullBonk, splat } from '@/audio/sfx.js';
+import { TAU, clamp, damp, easeOutCubic, randPick, randRange } from '@/utils/math.js';
 
 // -----------------------------------------------------------------------------
 //  Tuning
@@ -41,6 +45,7 @@ import { TAU, clamp, easeOutCubic, randPick, randRange } from '@/utils/math.js';
 
 const BLOB_COUNT = 70;
 const DEBRIS_COUNT = 22;
+const BONE_COUNT = 14;
 const SCREEN_SPLAT_COUNT = 8;
 const GRAVITY = -20;
 
@@ -53,6 +58,12 @@ const SCREEN_SPLAT_DISTANCE = 1.3; // in front of the camera
 const SCREEN_SPLAT_HOLD = 2.4; // seconds before fading starts
 const SCREEN_SPLAT_FADE = 2.2;
 
+/** Bones and skull bounce physics */
+const BONE_BOUNCE = 0.42; // share of vertical speed kept on each bounce
+const BONE_REST_SPEED = 1.8; // below this impact speed, a bone stops bouncing
+const BONE_SKID_FRICTION = 5; // how quickly resting bones stop sliding
+const SKULL_RADIUS = 0.18;
+
 /** Red splatter shades. */
 const RED_SHADES = ['#b3001b', '#d90429', '#ff1f3d', '#8a0012', '#ff4d5e'].map((hex) =>
   Color4.FromColor3(Color3.FromHexString(hex), 1),
@@ -60,9 +71,9 @@ const RED_SHADES = ['#b3001b', '#d90429', '#ff1f3d', '#8a0012', '#ff4d5e'].map((
 
 /**
  * @typedef {Object} ExplosionOptions
- * @property {string} [playerColor='#33d17a'] Goggle debris color
+ * @property {string} [playerColor='#33d17a'] Goggle color (debris and skull)
  * @property {number} [floorY=0]              Height of the floor surface
- * @property {number} [floorFrontZ=-1]        Front edge of the floor (blobs in front of it keep falling)
+ * @property {number} [floorFrontZ=-1]        Front edge of the floor (things in front of it keep falling)
  * @property {number} [panRange=8]            World x distance treated as fully left/right for sound
  */
 
@@ -195,7 +206,7 @@ export function createExplosion(
   blobMaterial.emissiveColor = new Color3(0.25, 0, 0.02);
 
   const blobSource = MeshBuilder.CreateSphere('explosion-blob-source', { diameter: 0.2, segments: 8 }, scene);
-  prepareInstanceSource(blobSource, blobMaterial);
+  prepareInstanceSource(blobSource, blobMaterial, true);
 
   const debrisMaterial = new StandardMaterial('explosion-debris', scene);
   debrisMaterial.diffuseColor = new Color3(1, 1, 1);
@@ -208,7 +219,7 @@ export function createExplosion(
     { width: 0.18, height: 0.03, depth: 0.13 },
     scene,
   );
-  prepareInstanceSource(debrisSource, debrisMaterial);
+  prepareInstanceSource(debrisSource, debrisMaterial, true);
 
   const debrisColors = [
     Color4.FromHexString('#f4f7f6ff'), // lab coat
@@ -218,6 +229,21 @@ export function createExplosion(
     Color4.FromColor3(Color3.FromHexString(playerColor), 1), // goggle lens
     Color4.FromHexString('#3b2a5cff'), // trousers
   ];
+
+  // ---------------------------------------------------------------------------
+  //  Cartoon bones (instanced) and the skull
+  // ---------------------------------------------------------------------------
+  const boneMaterial = new StandardMaterial('explosion-bone', scene);
+  boneMaterial.diffuseColor = Color3.FromHexString('#f5eedc');
+  boneMaterial.specularColor = new Color3(0.5, 0.5, 0.45);
+  boneMaterial.specularPower = 32;
+  boneMaterial.emissiveColor = Color3.FromHexString('#3a352a'); // stays readable under wild lights
+
+  const boneSource = createBoneTemplate(scene);
+  prepareInstanceSource(boneSource, boneMaterial, false);
+
+  const skull = createSkull(scene, boneMaterial, playerColor);
+  skull.node.setEnabled(false);
 
   /**
    * @typedef {Object} Chunk
@@ -232,7 +258,17 @@ export function createExplosion(
   let blobs = [];
   /** @type {Chunk[]} */
   let debris = [];
+  /** @type {Chunk[]} */
+  let bones = [];
   let instanceCounter = 0;
+
+  /** Skull state */
+  const skullState = {
+    active: false,
+    resting: false,
+    velocity: new Vector3(),
+    spin: new Vector3(),
+  };
 
   // ---------------------------------------------------------------------------
   //  Screen splats (on the "camera lens")
@@ -240,7 +276,7 @@ export function createExplosion(
 
   /**
    * @typedef {Object} ScreenSplat
-   * @property {import('@babylonjs/core').Mesh} mesh
+   * @property {Mesh} mesh
    * @property {StandardMaterial} material
    * @property {number} appearAt   Seconds after the explosion
    * @property {number} size
@@ -296,6 +332,8 @@ export function createExplosion(
 
     spawnBlobs();
     spawnDebris();
+    spawnBones();
+    launchSkull();
     spawnScreenSplats();
   }
 
@@ -356,6 +394,48 @@ export function createExplosion(
     }
   }
 
+  function spawnBones() {
+    for (let i = 0; i < BONE_COUNT; i += 1) {
+      const mesh = boneSource.createInstance(`explosion-bone-${instanceCounter++}`);
+      mesh.isPickable = false;
+      mesh.position.copyFrom(origin).addInPlaceFromFloats(
+        randRange(-0.2, 0.2),
+        randRange(-0.2, 0.3),
+        randRange(-0.1, 0.1),
+      );
+      mesh.rotation.set(randRange(0, TAU), randRange(0, TAU), randRange(0, TAU));
+
+      const size = randRange(0.65, 1.5);
+      mesh.scaling.setAll(size);
+
+      // Fling them high and wide so they're easy to see.
+      const angle = randRange(0.15, Math.PI - 0.15); // mostly upward
+      const speed = randRange(6, 14);
+      bones.push({
+        mesh,
+        velocity: new Vector3(
+          Math.cos(angle) * speed * randRange(0.8, 1.3),
+          Math.sin(angle) * speed + randRange(3, 7),
+          randRange(-1.2, 1.5),
+        ),
+        // Spin mostly end over end (around z) so it reads clearly from the side.
+        spin: new Vector3(randRange(-6, 6), randRange(-6, 6), randRange(-16, 16)),
+        size,
+        resting: false,
+      });
+    }
+  }
+
+  function launchSkull() {
+    skull.node.position.copyFrom(origin).addInPlaceFromFloats(0, 0.3, 0);
+    skull.node.rotation.set(0, Math.PI / 2, 0);
+    skull.node.setEnabled(true);
+    skullState.active = true;
+    skullState.resting = false;
+    skullState.velocity.set(randRange(-2.5, 2.5), randRange(10, 13), randRange(-0.6, 0.4));
+    skullState.spin.set(randRange(-3, 3), randRange(-4, 4), randRange(-11, 11));
+  }
+
   function spawnScreenSplats() {
     const halfHeight = SCREEN_SPLAT_DISTANCE * Math.tan(camera.fov / 2);
     const engine = scene.getEngine();
@@ -413,6 +493,8 @@ export function createExplosion(
     updateShockwaves();
     updateBlobs(dt);
     updateDebris(dt);
+    updateBones(dt);
+    updateSkull(dt);
     updateScreenSplats(dt);
 
     // Orange flash fades quickly.
@@ -525,6 +607,115 @@ export function createExplosion(
     }
   }
 
+  /**
+   * Bones fly, tumble, then bounce and clatter across the floor before
+   * skidding to a stop.
+   * @param {number} dt
+   */
+  function updateBones(dt) {
+    const survivors = [];
+    for (const bone of bones) {
+      const position = bone.mesh.position;
+
+      if (bone.resting) {
+        // Skid along the floor until friction stops it.
+        const friction = Math.exp(-BONE_SKID_FRICTION * dt);
+        bone.velocity.x *= friction;
+        bone.velocity.z *= friction;
+        position.x += bone.velocity.x * dt;
+        position.z += bone.velocity.z * dt;
+        bone.mesh.rotation.y += bone.spin.y * dt * Math.abs(bone.velocity.x) * 0.1;
+        survivors.push(bone);
+        continue;
+      }
+
+      bone.velocity.y += GRAVITY * dt;
+      position.addInPlace(bone.velocity.scale(dt));
+      bone.mesh.rotation.addInPlace(bone.spin.scale(dt));
+
+      const contactHeight = floorY + 0.05 * bone.size;
+      const overFloor = position.z >= floorFrontZ;
+
+      if (overFloor && position.y <= contactHeight && bone.velocity.y < 0) {
+        const impact = Math.abs(bone.velocity.y);
+        position.y = contactHeight;
+
+        // CLACK! Louder for harder hits, higher for smaller bones.
+        boneClack({
+          pan: panFor(position.x),
+          strength: clamp(impact / 12, 0, 1),
+          size: bone.size,
+        });
+
+        if (impact < BONE_REST_SPEED) {
+          // Lie flat on the floor (keep its heading), then skid.
+          bone.resting = true;
+          bone.mesh.rotation.set(0, bone.mesh.rotation.y, 0);
+        } else {
+          bone.velocity.y = impact * BONE_BOUNCE;
+          bone.velocity.x *= 0.7;
+          bone.velocity.z *= 0.7;
+          bone.spin.scaleInPlace(0.6);
+          // A little random kick on each bounce makes the clatter feel chaotic.
+          bone.spin.z += randRange(-4, 4);
+        }
+        survivors.push(bone);
+      } else if (position.y < floorY - 10) {
+        bone.mesh.dispose(); // fell off the front edge, out of sight
+      } else {
+        survivors.push(bone);
+      }
+    }
+    bones = survivors;
+  }
+
+  /**
+   * The skull spins through the air, BONKs and bounces, then settles
+   * facing the camera.
+   * @param {number} dt
+   */
+  function updateSkull(dt) {
+    if (!skullState.active) return;
+    const node = skull.node;
+    const position = node.position;
+
+    if (skullState.resting) {
+      // Roll upright to stare at the camera.
+      node.rotation.x = damp(node.rotation.x, 0, 6, dt);
+      node.rotation.y = damp(node.rotation.y, Math.PI / 2 - 0.25, 6, dt);
+      node.rotation.z = damp(node.rotation.z, 0.12, 6, dt);
+      return;
+    }
+
+    skullState.velocity.y += GRAVITY * dt;
+    position.addInPlace(skullState.velocity.scale(dt));
+    node.rotation.addInPlace(skullState.spin.scale(dt));
+
+    const contactHeight = floorY + SKULL_RADIUS;
+    const overFloor = position.z >= floorFrontZ;
+
+    if (overFloor && position.y <= contactHeight && skullState.velocity.y < 0) {
+      const impact = Math.abs(skullState.velocity.y);
+      position.y = contactHeight;
+      skullBonk({ pan: panFor(position.x), strength: clamp(impact / 12, 0, 1) });
+
+      if (impact < 2.2) {
+        skullState.resting = true;
+        node.rotation.x = wrapAngle(node.rotation.x);
+        node.rotation.y = wrapAngle(node.rotation.y);
+        node.rotation.z = wrapAngle(node.rotation.z);
+      } else {
+        skullState.velocity.y = impact * 0.45;
+        skullState.velocity.x *= 0.65;
+        skullState.velocity.z *= 0.6;
+        skullState.spin.scaleInPlace(0.55);
+      }
+    } else if (position.y < floorY - 10) {
+      skullState.active = false;
+      node.setEnabled(false);
+    }
+  }
+
   /** @param {number} dt */
   function updateScreenSplats(dt) {
     for (const s of screenSplats) {
@@ -569,13 +760,19 @@ export function createExplosion(
     age = -1;
     blobs.forEach((b) => b.mesh.dispose());
     debris.forEach((d) => d.mesh.dispose());
+    bones.forEach((b) => b.mesh.dispose());
     screenSplats.forEach((s) => {
       s.mesh.dispose();
       s.material.dispose();
     });
     blobs = [];
     debris = [];
+    bones = [];
     screenSplats = [];
+
+    skullState.active = false;
+    skullState.resting = false;
+    skull.node.setEnabled(false);
 
     fireball.setEnabled(false);
     airRing.setEnabled(false);
@@ -598,12 +795,15 @@ export function createExplosion(
     particleSystems.forEach((system) => system.dispose());
     glowTexture.dispose();
     splatTextures.forEach((texture) => texture.dispose());
-    [fireball, airRing, floorRing, blobSource, debrisSource].forEach((mesh) => mesh.dispose());
+    [fireball, airRing, floorRing, blobSource, debrisSource, boneSource].forEach((mesh) => mesh.dispose());
     aftershocks.forEach((shock) => {
       shock.mesh.dispose();
       shock.material.dispose();
     });
-    [fireMaterial, ringMaterial, blobMaterial, debrisMaterial].forEach((material) => material.dispose());
+    skull.dispose();
+    [fireMaterial, ringMaterial, blobMaterial, debrisMaterial, boneMaterial].forEach((material) =>
+      material.dispose(),
+    );
     flashLight.dispose();
   }
 
@@ -611,23 +811,151 @@ export function createExplosion(
 }
 
 // =============================================================================
+//  Bone and skull builders
+// =============================================================================
+
+/**
+ * A classic cartoon bone: a shaft with two round knobs on each end,
+ * merged into a single mesh. Its length runs along local x.
+ * @param {import('@babylonjs/core').Scene} scene
+ * @returns {Mesh}
+ */
+function createBoneTemplate(scene) {
+  const length = 0.5;
+  const parts = [];
+
+  const shaft = MeshBuilder.CreateCylinder('bone-shaft', { height: length, diameter: 0.075, tessellation: 12 }, scene);
+  shaft.rotation.z = Math.PI / 2; // lie along x
+  parts.push(shaft);
+
+  for (const end of [-1, 1]) {
+    for (const side of [-1, 1]) {
+      const knob = MeshBuilder.CreateSphere('bone-knob', { diameter: 0.11, segments: 10 }, scene);
+      knob.position.set(end * length * 0.5, side * 0.04, 0);
+      parts.push(knob);
+    }
+  }
+
+  const bone = /** @type {Mesh} */ (Mesh.MergeMeshes(parts, true, true));
+  bone.name = 'explosion-bone-source';
+  return bone;
+}
+
+/**
+ * The scientist's cartoon skull, still wearing his glowing goggles.
+ * Faces local +x (like the scientist did).
+ * @param {import('@babylonjs/core').Scene} scene
+ * @param {StandardMaterial} boneMaterial
+ * @param {string} playerColor
+ */
+function createSkull(scene, boneMaterial, playerColor) {
+  const node = new TransformNode('explosion-skull', scene);
+
+  const dark = new StandardMaterial('explosion-skull-dark', scene);
+  dark.diffuseColor = Color3.FromHexString('#120a14');
+  dark.specularColor = Color3.Black();
+  dark.emissiveColor = Color3.FromHexString('#050206');
+
+  const metal = new StandardMaterial('explosion-skull-metal', scene);
+  metal.diffuseColor = Color3.FromHexString('#9aa4ad');
+  metal.specularColor = new Color3(0.9, 0.9, 0.9);
+  metal.emissiveColor = new Color3(0.1, 0.1, 0.1);
+
+  const glow = new StandardMaterial('explosion-skull-glow', scene);
+  const glowColor = Color3.FromHexString(playerColor);
+  glow.diffuseColor = glowColor;
+  glow.emissiveColor = glowColor;
+  glow.specularColor = new Color3(0.8, 0.8, 0.8);
+
+  /** @type {Mesh[]} */
+  const meshes = [];
+
+  /**
+   * @param {Mesh} mesh
+   * @param {StandardMaterial} material
+   */
+  const add = (mesh, material) => {
+    mesh.parent = node;
+    mesh.material = material;
+    mesh.isPickable = false;
+    meshes.push(mesh);
+    return mesh;
+  };
+
+  // Cranium
+  const cranium = add(MeshBuilder.CreateSphere('skull-cranium', { diameter: 0.36, segments: 16 }, scene), boneMaterial);
+  cranium.scaling.set(1, 0.95, 0.95);
+
+  // Jaw
+  const jaw = add(MeshBuilder.CreateBox('skull-jaw', { width: 0.2, height: 0.09, depth: 0.2 }, scene), boneMaterial);
+  jaw.position.set(0.05, -0.16, 0);
+
+  // Teeth line
+  const teeth = add(MeshBuilder.CreateBox('skull-teeth', { width: 0.01, height: 0.02, depth: 0.15 }, scene), dark);
+  teeth.position.set(0.151, -0.14, 0);
+
+  // Eye sockets and nose hole
+  for (const side of [-1, 1]) {
+    const socket = add(MeshBuilder.CreateSphere(`skull-eye-${side}`, { diameter: 0.09, segments: 10 }, scene), dark);
+    socket.position.set(0.14, 0.03, side * 0.07);
+  }
+  const nose = add(MeshBuilder.CreateCylinder('skull-nose', { height: 0.04, diameterTop: 0, diameterBottom: 0.05, tessellation: 3 }, scene), dark);
+  nose.position.set(0.165, -0.05, 0);
+  nose.rotation.z = -Math.PI / 2;
+
+  // Goggles: strap plus two rims with glowing lenses
+  const strap = add(MeshBuilder.CreateTorus('skull-goggle-strap', { diameter: 0.37, thickness: 0.03, tessellation: 24 }, scene), dark);
+  strap.position.y = 0.04;
+
+  for (const side of [-1, 1]) {
+    const rim = add(MeshBuilder.CreateTorus(`skull-goggle-rim-${side}`, { diameter: 0.11, thickness: 0.03, tessellation: 16 }, scene), metal);
+    rim.position.set(0.175, 0.04, side * 0.07);
+    rim.rotation.z = Math.PI / 2;
+
+    const lens = add(MeshBuilder.CreateCylinder(`skull-goggle-lens-${side}`, { diameter: 0.09, height: 0.02, tessellation: 16 }, scene), glow);
+    lens.parent = rim;
+    lens.position.set(0, 0, 0);
+  }
+
+  return {
+    node,
+    dispose() {
+      meshes.forEach((mesh) => mesh.dispose());
+      node.dispose();
+      [dark, metal, glow].forEach((material) => material.dispose());
+    },
+  };
+}
+
+// =============================================================================
 //  Helpers
 // =============================================================================
 
 /**
- * Hide an instancing source mesh while keeping its instances visible,
- * and enable per-instance colors.
- * @param {import('@babylonjs/core').Mesh} source
+ * Hide an instancing source mesh while keeping its instances visible.
+ * @param {Mesh} source
  * @param {StandardMaterial} material
+ * @param {boolean} perInstanceColor Enable a separate color for each instance
  */
-function prepareInstanceSource(source, material) {
+function prepareInstanceSource(source, material, perInstanceColor) {
   source.material = material;
   source.isPickable = false;
-  source.registerInstancedBuffer('color', 4);
-  source.instancedBuffers.color = new Color4(1, 1, 1, 1);
+  if (perInstanceColor) {
+    source.registerInstancedBuffer('color', 4);
+    source.instancedBuffers.color = new Color4(1, 1, 1, 1);
+  }
   source.position.set(0, -1000, 0);
   source.scaling.setAll(0.0001);
   source.alwaysSelectAsActiveMesh = true;
+}
+
+/**
+ * Wrap an angle into -π to π, so easing back to upright takes the short way.
+ * @param {number} angle
+ * @returns {number}
+ */
+function wrapAngle(angle) {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
 }
 
 /**

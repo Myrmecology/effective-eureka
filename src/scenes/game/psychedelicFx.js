@@ -9,6 +9,9 @@
  *  - post-processing: bloom, chromatic aberration, grain, vignette
  *  - screen flashes for big moments
  *
+ * The background and floor are oversized so the screen stays fully
+ * covered even when the camera tilts far to either side.
+ *
  * Safety: flashes stay under 3 per second (the WCAG photosensitivity
  * guideline), and users who turn on "reduce motion" get a much calmer
  * version automatically.
@@ -163,6 +166,15 @@ const SHAPE_COUNT = 16;
 const LIGHT_HUE_SPEED = 70; // degrees per second
 
 /**
+ * How much bigger than the screen the background and floor are.
+ * Large enough to stay covered at about a 35 degree camera tilt.
+ */
+const BACKGROUND_COVERAGE = 2.6;
+const FLOOR_WIDTH_COVERAGE = 3.5; // times the full screen width
+const FLOOR_HEIGHT = 16; // how far the floor's front face extends downward
+const FLOOR_DEPTH = 6;
+
+/**
  * @param {import('@babylonjs/core').Scene} scene
  * @param {import('@babylonjs/core').Camera} camera
  * @param {{ playerColor?: string, viewHalfWidth: number, viewHalfHeight: number }} options
@@ -187,17 +199,19 @@ export function createPsychedelicFx(scene, camera, { playerColor = '#33d17a', vi
   );
   backgroundMaterial.backFaceCulling = false;
 
-  // Size the backdrop to cover the view at its depth (with room for camera motion).
+  // Size the backdrop to cover the view at its depth, with plenty of extra
+  // room so the corners stay filled while the camera tilts.
   const bgScale = (BACKGROUND_Z - camera.position.z) / Math.max(1, -camera.position.z);
+  const bgCover = Math.max(viewHalfWidth, viewHalfHeight) * 2 * bgScale * BACKGROUND_COVERAGE;
   const background = MeshBuilder.CreatePlane(
     'psy-background-plane',
-    { width: viewHalfWidth * 2 * bgScale * 1.4, height: viewHalfHeight * 2 * bgScale * 1.4 },
+    { width: bgCover, height: bgCover },
     scene,
   );
   background.position.set(0, viewHalfHeight * 0.3, BACKGROUND_Z);
   background.material = backgroundMaterial;
   background.isPickable = false;
-  backgroundMaterial.setFloat('aspect', viewHalfWidth / viewHalfHeight);
+  backgroundMaterial.setFloat('aspect', 1); // the plane is square now
   backgroundMaterial.setColor3('tint', tint);
 
   // ---------------------------------------------------------------------------
@@ -214,14 +228,12 @@ export function createPsychedelicFx(scene, camera, { playerColor = '#33d17a', vi
   );
   floorMaterial.setColor3('tint', tint);
 
-  const floorDepth = 6;
-  const floorHeight = 6;
   const floor = MeshBuilder.CreateBox(
     'psy-floor-box',
-    { width: viewHalfWidth * 2 * 2, height: floorHeight, depth: floorDepth },
+    { width: viewHalfWidth * 2 * FLOOR_WIDTH_COVERAGE, height: FLOOR_HEIGHT, depth: FLOOR_DEPTH },
     scene,
   );
-  floor.position.set(0, -floorHeight / 2, floorDepth / 2 - 1);
+  floor.position.set(0, -FLOOR_HEIGHT / 2, FLOOR_DEPTH / 2 - 1);
   floor.material = floorMaterial;
   floor.isPickable = false;
 
@@ -248,6 +260,7 @@ export function createPsychedelicFx(scene, camera, { playerColor = '#33d17a', vi
 
     const depth = randRange(8, 22);
     mesh.position.set(randRange(-spanX, spanX), randRange(1, viewHalfHeight * 2.2), depth);
+
     const baseScale = randRange(0.8, 2.2);
     mesh.scaling.setAll(baseScale);
 
@@ -260,6 +273,7 @@ export function createPsychedelicFx(scene, camera, { playerColor = '#33d17a', vi
       spin: new Vector3(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1)),
       bobPhase: randRange(0, TAU),
       baseY: mesh.position.y,
+      baseScale,
     });
   }
 

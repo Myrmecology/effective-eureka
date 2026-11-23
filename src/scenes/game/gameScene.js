@@ -49,9 +49,14 @@ const GAME_OVER_DELAY_MS = 1800; // long enough to enjoy the explosion
 
 const BASE_BPM = 124;
 
-/** Camera tilt (visual only; it never affects gameplay). */
-const TILT_MAX = 0.17; // radians, about 10 degrees
-const TILT_MIN_SHARE = 0.45; // share of the max tilt from the very start of a run
+/**
+ * Camera tilt (visual only; it never affects gameplay).
+ * TILT_MAX is the biggest lean in radians: 0.52 is about 30 degrees.
+ * The background and floor in psychedelicFx.js stay covered up to about 35 degrees.
+ */
+const TILT_MAX = 0.52;
+const TILT_MIN_SHARE = 0.6; // share of the max tilt from the very start of a run
+const TILT_RESPONSE = 3; // how quickly the camera follows the sway (higher = snappier)
 
 /** Where the explosion starts, relative to the scientist's feet. */
 const EXPLOSION_OFFSET = new Vector3(0, 0.95, 0);
@@ -346,15 +351,19 @@ export function createGameScene({ engine, options }) {
   }
 
   /**
-   * The woozy tilt: two slow waves mixed together so the sway never feels
-   * like a simple back-and-forth. It grows as the game speeds up.
+   * The woozy tilt: three waves at different speeds mixed together, so the
+   * view lurches and leans unpredictably instead of rocking evenly.
+   * The weights add up to 1, so the lean never goes past TILT_MAX.
    * @returns {number} Target tilt in radians
    */
   function targetTilt() {
     if (fx.safeMode || phase !== 'playing') return 0;
     const progress = clamp((speed - START_SPEED) / (MAX_SPEED - START_SPEED), 0, 1);
     const amount = TILT_MAX * (TILT_MIN_SHARE + (1 - TILT_MIN_SHARE) * progress);
-    const wave = Math.sin(time * 0.35) * 0.7 + Math.sin(time * 0.83 + 1.3) * 0.3;
+    const wave =
+      Math.sin(time * 0.42) * 0.6 +
+      Math.sin(time * 0.97 + 1.3) * 0.3 +
+      Math.sin(time * 2.1 + 0.7) * 0.1;
     return amount * wave;
   }
 
@@ -375,7 +384,7 @@ export function createGameScene({ engine, options }) {
 
     // Tilt eases smoothly toward its target (and back to level on crash or pause).
     if (phase !== 'paused') {
-      tilt = damp(tilt, targetTilt(), phase === 'playing' ? 2.5 : 1.5, dt);
+      tilt = damp(tilt, targetTilt(), phase === 'playing' ? TILT_RESPONSE : 1.5, dt);
     }
     camera.rotation.z = tilt;
 
